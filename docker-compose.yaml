@@ -64,7 +64,9 @@ services:
       PROM_PUSH_URL: ${PROM_PUSH_URL}
       LOKI_PUSH_URL: ${LOKI_PUSH_URL}
     volumes:
-      - ./config-template/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Directory mount, not single-file — file binds break on some hosts
+      # (e.g. Unraid's /mnt/user FUSE layer).
+      - ./config-template/alloy:/etc/alloy:ro
       - ${CONFIG_ROOT:-./config}/alloy:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
