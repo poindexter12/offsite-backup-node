@@ -73,6 +73,30 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 
+  # Optional host-side bandwidth cap, controlled by whoever RUNS this box —
+  # protects their network regardless of what the backup sender does. Off by
+  # default (needs NET_ADMIN, the one exception to the zero-caps rule);
+  # enable with COMPOSE_PROFILES=throttle in .env. Shapes the tailscale
+  # container's interface, so it caps everything: backups arriving
+  # (MAX_DOWN_MBIT), restores/telemetry leaving (MAX_UP_MBIT).
+  shaper:
+    image: alpine:latest
+    profiles: ["throttle"]
+    network_mode: service:tailscale
+    cap_add:
+      - NET_ADMIN
+    command:
+      - sh
+      - -c
+      - >
+        apk add -q iproute2 &&
+        tc qdisc replace dev eth0 root tbf rate ${MAX_UP_MBIT:-1000}mbit burst 64kb latency 400ms &&
+        tc qdisc replace dev eth0 handle ffff: ingress &&
+        tc filter replace dev eth0 parent ffff: protocol all prio 1 u32 match u32 0 0 police rate ${MAX_DOWN_MBIT:-1000}mbit burst 1m drop &&
+        echo "shaper: up=${MAX_UP_MBIT:-1000}mbit down=${MAX_DOWN_MBIT:-1000}mbit" &&
+        sleep infinity
+    restart: unless-stopped
+
   # Stateless by design (docker.sock only) — no config subdir needed.
   watchtower:
     image: containrrr/watchtower:latest

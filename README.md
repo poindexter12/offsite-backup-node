@@ -47,6 +47,15 @@ PROM_PUSH_URL=      # metrics receiver on the operator's bridge node
 LOKI_PUSH_URL=      # log receiver on the operator's bridge node
 ```
 
+## Bandwidth cap (optional, yours)
+
+If you don't want backup traffic saturating your connection, uncomment
+`COMPOSE_PROFILES=throttle` in `.env` and set `MAX_DOWN_MBIT` (backups
+arriving) / `MAX_UP_MBIT` (restores leaving). This runs a tiny traffic-shaper
+sidecar — the one component that needs elevated network privileges
+(`NET_ADMIN`), which is why it's off by default. The cap is enforced on your
+box, by you: the backup sender can't exceed it no matter what.
+
 ## Trust properties
 
 - **The host can't read the backups**: repositories hold restic's client-side
