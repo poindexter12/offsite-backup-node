@@ -35,6 +35,10 @@ That's it. It enrolls itself on first boot (the join key burns after one use),
 survives reboots and outages, updates itself, and never needs re-auth. Updates
 to this repo: `git pull && docker compose up -d`.
 
+> One operational rule: never restart the `tailscale` container alone — the
+> other services live inside its network namespace and would be orphaned.
+> Always `docker compose up -d --force-recreate` (or restart the whole stack).
+
 ## Configuration (`.env`)
 
 ```
