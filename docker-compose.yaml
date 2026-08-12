@@ -1,0 +1,85 @@
+# offsite-backup-node — self-contained offsite restic backup target
+# Ships as a folder: this file + serve.json + config/ + .env. Run: docker compose up -d
+#
+# Mount model: ONE config root (CONFIG_ROOT, default ./config — per-component
+# subdirs) + ONE data mount (DATA_PATH, the backup disk). Nothing else touches
+# the host.
+#
+# Network model: private by construction — no `ports:` anywhere, so nothing
+# listens on the LAN. Inbound arrives only via Tailscale serve inside the
+# tailnet; the docker bridge is outbound-only (tailscaled needs egress to the
+# coordination servers, so the network cannot be `internal: true`).
+#
+# All images are official/upstream; watchtower keeps them current, so no pinned
+# tags by design. config/tailscaled survives updates — the node never re-enrolls;
+# TS_AUTHKEY only matters on first boot.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: ${OFFSITE_HOSTNAME:-offsite-backup}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      # Optional: point at a self-hosted control server (headscale). Empty =
+      # Tailscale SaaS.
+      TS_EXTRA_ARGS: ${TS_LOGIN_SERVER:+--login-server=${TS_LOGIN_SERVER}}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_HOSTNAME: ${OFFSITE_HOSTNAME:-offsite-backup}
+      TS_ENABLE_METRICS: "true" # tailscaled client metrics on :9002 for alloy
+    volumes:
+      - ${CONFIG_ROOT:-./config}/tailscaled:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  rest-server:
+    image: restic/rest-server:latest
+    # Shares the tailscale container's network namespace: reachable ONLY over
+    # the tailnet (serve.json proxy), never on the LAN.
+    network_mode: service:tailscale
+    environment:
+      OPTIONS: "--append-only --htpasswd-file /config/restic/.htpasswd --prometheus --prometheus-no-auth"
+    volumes:
+      - ${CONFIG_ROOT:-./config}/restic:/config/restic:ro
+      - ${DATA_PATH:?path to the backup disk/directory}:/data
+    depends_on:
+      - tailscale
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # Telemetry: ships container logs + rest-server/tailscaled metrics home to the
+  # estate observability stack, via the estate bridge node on the SaaS tailnet
+  # (PROM_PUSH_URL / LOKI_PUSH_URL in .env). Reaches the tailnet through the
+  # tailscale service's netns ports (tailscale:8000, tailscale:9002).
+  alloy:
+    image: grafana/alloy:latest
+    # Config loads from the tracked template so a fresh clone runs with zero
+    # seeding; only alloy's WAL/state lands under CONFIG_ROOT.
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/data"]
+    environment:
+      PROM_PUSH_URL: ${PROM_PUSH_URL}
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL}
+    volumes:
+      - ./config-template/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${CONFIG_ROOT:-./config}/alloy:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - tailscale
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # Stateless by design (docker.sock only) — no config subdir needed.
+  watchtower:
+    image: containrrr/watchtower:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: "21600" # 6h
+    restart: unless-stopped

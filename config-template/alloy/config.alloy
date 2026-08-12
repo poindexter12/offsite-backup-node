@@ -1,0 +1,34 @@
+// Offsite telemetry → estate bridge node (SaaS tailnet) → observability.
+// Push URLs come from .env (they point at the estate-side bridge node's tailnet address).
+
+discovery.docker "local" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.local.targets
+  labels     = { site = "offsite", stack = "backups" }
+  forward_to = [loki.write.estate.receiver]
+}
+
+prometheus.scrape "backup_stack" {
+  targets = [
+    { "__address__" = "tailscale:8000", "job" = "rest-server" },
+    { "__address__" = "tailscale:9002", "job" = "tailscaled" },
+  ]
+  forward_to = [prometheus.remote_write.estate.receiver]
+}
+
+prometheus.remote_write "estate" {
+  endpoint {
+    url = sys.env("PROM_PUSH_URL")
+  }
+  external_labels = { site = "offsite" }
+}
+
+loki.write "estate" {
+  endpoint {
+    url = sys.env("LOKI_PUSH_URL")
+  }
+}

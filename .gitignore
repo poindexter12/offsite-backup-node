@@ -1,0 +1,4 @@
+# Operator-provided secrets and runtime state — never committed.
+.env
+config/
+data/
