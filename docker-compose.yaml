@@ -65,7 +65,7 @@ services:
       LOKI_PUSH_URL: ${LOKI_PUSH_URL}
     volumes:
       # Directory mount, not single-file — file binds break on some hosts
-      # (e.g. Unraid's /mnt/user FUSE layer).
+      # (e.g. FUSE-backed storage layers).
       - ./config-template/alloy:/etc/alloy:ro
       - ${CONFIG_ROOT:-./config}/alloy:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -115,7 +115,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # Some daemons (e.g. Unraid) reject watchtower's negotiated API version.
+      # Some docker daemons reject watchtower's negotiated API version.
       DOCKER_API_VERSION: "1.44"
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_CLEANUP: "true"

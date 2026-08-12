@@ -24,9 +24,8 @@ You need two small files from whoever operates the backups (they contain the
 private-network join key and the server password hash — deliberately not in
 this repo): `.env` and `config/restic/.htpasswd`.
 
-1. Docker + docker compose. **Unraid**: install the *Compose Manager* plugin
-   (Apps) — Unraid ships docker without the compose command.
-2. Clone this repo somewhere permanent (Unraid: under `/mnt/user/appdata/`).
+1. Any Linux machine with Docker and the docker compose plugin installed.
+2. Clone this repo somewhere permanent (e.g. `/opt/offsite-backup-node`).
 3. Drop in the two provided files (`.env` next to the compose file, the
    htpasswd under `config/restic/`).
 4. `docker compose up -d`
@@ -41,15 +40,19 @@ to this repo: `git pull && docker compose up -d`.
 
 ## Configuration (`.env`)
 
-```
-OFFSITE_HOSTNAME=   # node name on the private network
-TS_AUTHKEY=         # one-shot Tailscale auth key (only matters on first boot)
-TS_LOGIN_SERVER=    # optional headscale URL; empty = Tailscale SaaS
-CONFIG_ROOT=./config
-DATA_PATH=          # absolute path to the disk that stores the backups
-PROM_PUSH_URL=      # metrics receiver on the operator's bridge node
-LOKI_PUSH_URL=      # log receiver on the operator's bridge node
-```
+All options, with defaults (see `env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OFFSITE_HOSTNAME` | `offsite-backup` | node name on the private network (also the container hostname) |
+| `TS_AUTHKEY` | *(empty)* | one-shot Tailscale auth key — only matters on first boot; the node never re-enrolls |
+| `TS_LOGIN_SERVER` | *(empty)* | optional self-hosted control server URL (headscale); empty = Tailscale SaaS |
+| `CONFIG_ROOT` | `./config` | directory holding all persistent component state (tailscale identity, htpasswd, alloy WAL) |
+| `DATA_PATH` | **required** | absolute path to the disk/directory that stores the backups |
+| `PROM_PUSH_URL` | *(empty)* | metrics receiver on the operator's bridge node |
+| `LOKI_PUSH_URL` | *(empty)* | log receiver on the operator's bridge node |
+| `MAX_DOWN_MBIT` | `0` | bandwidth cap on incoming backup traffic, Mbit/s; `0` = unlimited |
+| `MAX_UP_MBIT` | `0` | bandwidth cap on outgoing restore/telemetry traffic, Mbit/s; `0` = unlimited |
 
 ## Bandwidth cap (yours)
 
