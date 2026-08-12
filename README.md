@@ -47,14 +47,14 @@ PROM_PUSH_URL=      # metrics receiver on the operator's bridge node
 LOKI_PUSH_URL=      # log receiver on the operator's bridge node
 ```
 
-## Bandwidth cap (optional, yours)
+## Bandwidth cap (yours)
 
-If you don't want backup traffic saturating your connection, uncomment
-`COMPOSE_PROFILES=throttle` in `.env` and set `MAX_DOWN_MBIT` (backups
-arriving) / `MAX_UP_MBIT` (restores leaving). This runs a tiny traffic-shaper
-sidecar — the one component that needs elevated network privileges
-(`NET_ADMIN`), which is why it's off by default. The cap is enforced on your
-box, by you: the backup sender can't exceed it no matter what.
+If you don't want backup traffic saturating your connection, set
+`MAX_DOWN_MBIT` (backups arriving) / `MAX_UP_MBIT` (restores leaving) in
+`.env` and `docker compose restart shaper`. `0` — the default — means
+unlimited. The cap is enforced on your box, by you: the backup sender can't
+exceed it no matter what. (The shaper sidecar is the one component that needs
+elevated network privileges, `NET_ADMIN`.)
 
 ## Trust properties
 

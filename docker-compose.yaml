@@ -73,27 +73,37 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 
-  # Optional host-side bandwidth cap, controlled by whoever RUNS this box —
-  # protects their network regardless of what the backup sender does. Off by
-  # default (needs NET_ADMIN, the one exception to the zero-caps rule);
-  # enable with COMPOSE_PROFILES=throttle in .env. Shapes the tailscale
-  # container's interface, so it caps everything: backups arriving
-  # (MAX_DOWN_MBIT), restores/telemetry leaving (MAX_UP_MBIT).
+  # Host-side bandwidth cap, controlled by whoever RUNS this box — protects
+  # their network regardless of what the backup sender does. 0 (the default)
+  # = unlimited; set MAX_DOWN_MBIT (backups arriving) / MAX_UP_MBIT
+  # (restores/telemetry leaving) in .env and restart to throttle. Shapes the
+  # tailscale container's interface, so it caps everything. This sidecar is
+  # the one component needing elevated network privileges (NET_ADMIN).
   shaper:
     image: alpine:latest
-    profiles: ["throttle"]
     network_mode: service:tailscale
     cap_add:
       - NET_ADMIN
+    environment:
+      MAX_UP_MBIT: ${MAX_UP_MBIT:-0}
+      MAX_DOWN_MBIT: ${MAX_DOWN_MBIT:-0}
     command:
       - sh
       - -c
-      - >
-        apk add -q iproute2 &&
-        tc qdisc replace dev eth0 root tbf rate ${MAX_UP_MBIT:-1000}mbit burst 64kb latency 400ms &&
-        tc qdisc replace dev eth0 handle ffff: ingress &&
-        tc filter replace dev eth0 parent ffff: protocol all prio 1 u32 match u32 0 0 police rate ${MAX_DOWN_MBIT:-1000}mbit burst 1m drop &&
-        echo "shaper: up=${MAX_UP_MBIT:-1000}mbit down=${MAX_DOWN_MBIT:-1000}mbit" &&
+      - |
+        apk add -q iproute2
+        if [ "$$MAX_UP_MBIT" -gt 0 ] 2>/dev/null; then
+          tc qdisc replace dev eth0 root tbf rate "$${MAX_UP_MBIT}mbit" burst 64kb latency 400ms
+        else
+          tc qdisc del dev eth0 root 2>/dev/null || true
+        fi
+        if [ "$$MAX_DOWN_MBIT" -gt 0 ] 2>/dev/null; then
+          tc qdisc replace dev eth0 handle ffff: ingress
+          tc filter replace dev eth0 parent ffff: protocol all prio 1 u32 match u32 0 0 police rate "$${MAX_DOWN_MBIT}mbit" burst 1m drop
+        else
+          tc qdisc del dev eth0 ingress 2>/dev/null || true
+        fi
+        echo "shaper: up=$${MAX_UP_MBIT}mbit down=$${MAX_DOWN_MBIT}mbit (0 = unlimited)"
         sleep infinity
     restart: unless-stopped
 
