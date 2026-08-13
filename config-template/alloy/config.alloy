@@ -13,9 +13,10 @@ loki.source.docker "containers" {
 }
 
 prometheus.scrape "backup_stack" {
+  // Everything runs in this container's netns now — scrape over loopback.
   targets = [
-    { "__address__" = "tailscale:8000", "job" = "rest-server" },
-    { "__address__" = "tailscale:9002", "job" = "tailscaled" },
+    { "__address__" = "127.0.0.1:8000", "job" = "rest-server" },
+    { "__address__" = "127.0.0.1:9002", "job" = "tailscaled" },
   ]
   forward_to = [prometheus.remote_write.estate.receiver]
 }

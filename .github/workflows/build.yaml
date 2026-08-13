@@ -1,0 +1,105 @@
+# Build & publish ghcr.io/poindexter12/offsite-backup-node.
+#
+# Replaces watchtower-on-the-box: every 6h (watchtower's old poll interval)
+# this compares the current digests of the four upstream images against the
+# digests baked into the last published image's labels, and rebuilds only when
+# an upstream actually released. Pushes to main always build (Dockerfile /
+# entrypoint / config changes). The offsite box just `docker compose pull`s.
+
+name: build
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  TAILSCALE_IMAGE: tailscale/tailscale:latest
+  REST_SERVER_IMAGE: restic/rest-server:latest
+  ALLOY_IMAGE: grafana/alloy:latest
+  BASE_IMAGE: debian:stable-slim
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve upstream digests and decide whether to build
+        id: check
+        run: |
+          set -euo pipefail
+          skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+
+          digest() { skopeo inspect "docker://$1" | jq -r .Digest; }
+          ts=$(digest "$TAILSCALE_IMAGE")
+          rest=$(digest "$REST_SERVER_IMAGE")
+          alloy=$(digest "$ALLOY_IMAGE")
+          base=$(digest "$BASE_IMAGE")
+          upstream="tailscale=$ts rest-server=$rest alloy=$alloy base=$base"
+          echo "upstream: $upstream"
+
+          published=$(skopeo inspect "docker://$IMAGE:latest" 2>/dev/null \
+            | jq -r '.Labels["io.offsite-backup.upstream-digests"] // ""') || published=""
+          echo "published: ${published:-<none>}"
+
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "$upstream" != "$published" ]; then
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "Upstreams unchanged — skipping build."
+          fi
+
+          {
+            echo "upstream_digests=$upstream"
+            echo "tailscale_ref=${TAILSCALE_IMAGE%%:*}@$ts"
+            echo "rest_server_ref=${REST_SERVER_IMAGE%%:*}@$rest"
+            echo "alloy_ref=${ALLOY_IMAGE%%:*}@$alloy"
+            echo "base_ref=${BASE_IMAGE%%:*}@$base"
+            echo "date_tag=$(date -u +%Y%m%d-%H%M)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: steps.check.outputs.needs_build == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        if: steps.check.outputs.needs_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: steps.check.outputs.needs_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # Upstreams pinned to the exact digests we compared, so the label
+          # always states precisely what went into the published image.
+          build-args: |
+            TAILSCALE_IMAGE=${{ steps.check.outputs.tailscale_ref }}
+            REST_SERVER_IMAGE=${{ steps.check.outputs.rest_server_ref }}
+            ALLOY_IMAGE=${{ steps.check.outputs.alloy_ref }}
+            BASE_IMAGE=${{ steps.check.outputs.base_ref }}
+            UPSTREAM_DIGESTS=${{ steps.check.outputs.upstream_digests }}
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.check.outputs.date_tag }}

@@ -1,22 +1,36 @@
 # offsite-backup-node
 
-A self-contained, self-updating offsite backup target. One `docker compose up -d`
-turns any box with docker into an **append-only restic REST server** reachable
-only over a private [Tailscale](https://tailscale.com) network — nothing listens
-on your LAN, all stored data is client-side encrypted, and the whole thing keeps
-itself current from upstream images.
+A self-contained offsite backup target in **one docker image / one container**
+(`ghcr.io/poindexter12/offsite-backup-node`). One `docker compose up -d` turns
+any box with docker into an **append-only restic REST server** reachable only
+over a private [Tailscale](https://tailscale.com) network — nothing listens on
+your LAN, all stored data is client-side encrypted, and CI keeps the image
+current with its upstreams.
 
 Built for the "host a backup box at a relative's house" use case: the person
-running it needs zero maintenance and can never read the data.
+running it needs near-zero maintenance and can never read the data.
 
-## What runs
+## What runs (inside the one container)
 
-| Service | Image | Job |
+The image is assembled from official upstream images — the binaries are copied
+straight out of `tailscale/tailscale`, `restic/rest-server`, and
+`grafana/alloy` at build time onto a minimal `debian:stable-slim` base
+(tailscaled and rest-server are static; alloy is the one glibc-linked binary,
+which is what rules out alpine/distroless) — and a small supervisor
+(`entrypoint.sh`) runs them as one unit:
+
+| Process | From | Job |
 |---|---|---|
-| tailscale | `tailscale/tailscale` | joins the private network (userspace mode — no special caps); HTTPS via `tailscale serve` |
+| tailscaled | `tailscale/tailscale` | joins the private network (userspace mode); HTTPS via `tailscale serve` |
 | rest-server | `restic/rest-server` | restic REST API, **append-only** (clients can write, never delete history), htpasswd auth |
 | alloy | `grafana/alloy` | ships logs/metrics back to the operator over the same private network |
-| watchtower | `containrrr/watchtower` | auto-updates the other three from their upstream publishers |
+| tc shaping | iproute2 | applies your bandwidth caps at startup (the reason the container has `NET_ADMIN`) |
+
+Lifecycle: tailscaled and rest-server are critical — if either dies, the
+container exits and docker restarts everything together (no more
+"never restart the tailscale container alone" foot-gun; partial restarts are
+impossible by construction). Alloy is best-effort: telemetry failure never
+takes down the backup target.
 
 ## Running it
 
@@ -30,13 +44,33 @@ this repo): `.env` and `config/restic/.htpasswd`.
    htpasswd under `config/restic/`).
 4. `docker compose up -d`
 
-That's it. It enrolls itself on first boot (the join key burns after one use),
-survives reboots and outages, updates itself, and never needs re-auth. Updates
-to this repo: `git pull && docker compose up -d`.
+That's it. It enrolls itself on first boot (the join key burns after one use)
+and survives reboots and outages — `config/tailscaled` persists the identity,
+so the node never re-enrolls.
 
-> One operational rule: never restart the `tailscale` container alone — the
-> other services live inside its network namespace and would be orphaned.
-> Always `docker compose up -d --force-recreate` (or restart the whole stack).
+## Updates
+
+We build and publish our own image. A GitHub Actions workflow
+(`.github/workflows/build.yaml`) checks the four upstreams — `tailscale/tailscale`,
+`restic/rest-server`, `grafana/alloy`, and the `debian:stable-slim` base —
+every 6 hours (watchtower's old poll interval) and rebuilds/publishes
+`ghcr.io/poindexter12/offsite-backup-node` whenever any of them releases. The
+exact upstream digests that went into a build are pinned at build time and
+baked into the image's `io.offsite-backup.upstream-digests` label, which is
+also how the workflow detects change. Every publish is tagged `latest` plus a
+timestamp tag for rollback.
+
+The box picks updates up with:
+
+```sh
+cd /opt/offsite-backup-node && git pull -q && docker compose pull -q && docker compose up -d
+```
+
+To keep it hands-off, put that in cron (e.g. daily):
+
+```cron
+0 4 * * * cd /opt/offsite-backup-node && git pull -q && docker compose pull -q && docker compose up -d 2>&1 | logger -t offsite-backup-update
+```
 
 ## Configuration (`.env`)
 
@@ -58,10 +92,11 @@ All options, with defaults (see `env.example`):
 
 If you don't want backup traffic saturating your connection, set
 `MAX_DOWN_MBIT` (backups arriving) / `MAX_UP_MBIT` (restores leaving) in
-`.env` and `docker compose restart shaper`. `0` — the default — means
+`.env` and `docker compose up -d` (compose recreates the container when its
+environment changes; caps apply at startup). `0` — the default — means
 unlimited. The cap is enforced on your box, by you: the backup sender can't
-exceed it no matter what. (The shaper sidecar is the one component that needs
-elevated network privileges, `NET_ADMIN`.)
+exceed it no matter what. This shaping is why the container carries the
+`NET_ADMIN` capability.
 
 ## Trust properties
 
@@ -73,3 +108,6 @@ elevated network privileges, `NET_ADMIN`.)
   tailnet, gated by its ACLs plus htpasswd.
 - **No secrets in this repo**: everything identifying or sensitive arrives via
   the two operator-provided files.
+- **No secrets in the image**: the image bakes in only tracked, non-secret
+  config (`serve.json`, the alloy template); identity and credentials arrive
+  via mounts and environment at run time.
