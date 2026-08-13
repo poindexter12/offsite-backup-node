@@ -13,6 +13,7 @@ on:
     - cron: "23 */6 * * *"
   push:
     branches: [main]
+    paths-ignore: ["**.md", "env.example"]
   workflow_dispatch:
 
 permissions:

@@ -2,8 +2,8 @@
 # ONE image / ONE container (tailscale + rest-server + alloy + shaper,
 # supervised by entrypoint.sh; see Dockerfile).
 #
-# Ships as a folder: this file + Dockerfile + entrypoint.sh + serve.json +
-# config-template/ + .env. Run: docker compose up -d --build
+# Ships as a folder: this file + .env (the image comes prebuilt from GHCR).
+# Run: docker compose up -d
 #
 # Mount model: ONE config root (CONFIG_ROOT, default ./config — per-component
 # subdirs) + ONE data mount (DATA_PATH, the backup disk). Nothing else touches

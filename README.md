@@ -57,8 +57,12 @@ every 6 hours (watchtower's old poll interval) and rebuilds/publishes
 `ghcr.io/poindexter12/offsite-backup-node` whenever any of them releases. The
 exact upstream digests that went into a build are pinned at build time and
 baked into the image's `io.offsite-backup.upstream-digests` label, which is
-also how the workflow detects change. Every publish is tagged `latest` plus a
-timestamp tag for rollback.
+also how the workflow detects change.
+
+Images are multi-arch (amd64 + arm64) and the package is public — no registry
+login anywhere. Every publish is tagged `latest` plus a timestamp tag
+(e.g. `20260813-2234`); to roll back, set that tag on the `image:` line in
+`docker-compose.yaml` and `docker compose up -d`.
 
 The box picks updates up with:
 
@@ -71,6 +75,12 @@ To keep it hands-off, put that in cron (e.g. daily):
 ```cron
 0 4 * * * cd /opt/offsite-backup-node && git pull -q && docker compose pull -q && docker compose up -d 2>&1 | logger -t offsite-backup-update
 ```
+
+## Development
+
+To build and run the image locally instead of pulling from GHCR:
+`docker compose up -d --build`. Local builds track the upstreams' `:latest`
+tags; CI builds pin exact digests.
 
 ## Configuration (`.env`)
 
