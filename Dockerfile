@@ -50,6 +50,8 @@ ENV TS_STATE_DIR=/var/lib/tailscale \
     TS_SERVE_CONFIG=/config/serve.json \
     TS_AUTH_ONCE=true \
     TS_USERSPACE=true \
-    TS_ENABLE_METRICS=true
+    TS_ENABLE_METRICS=true \
+    TS_SOCKS5_SERVER=localhost:1055 \
+    TS_OUTBOUND_HTTP_PROXY_LISTEN=localhost:1055
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
