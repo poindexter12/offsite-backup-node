@@ -1,0 +1,59 @@
+// Bridge role: tailnet-facing receivers → estate observability, plus this
+// container's own logs and metrics. Estate URLs come from the environment
+// (rendered from the estate's group_vars at deploy — never hardcoded here).
+// Component names match the pre-single-image bridge stack so an existing WAL
+// carries over.
+
+// --- receivers (the offsite node's alloy pushes to these over the tailnet) ---
+
+prometheus.receive_http "offsite" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 9090
+  }
+  forward_to = [prometheus.remote_write.estate.receiver]
+}
+
+loki.source.api "offsite" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 3100
+  }
+  forward_to = [loki.write.estate.receiver]
+}
+
+// --- own telemetry (this container + anything else on the host's docker) ---
+
+discovery.docker "local" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.local.targets
+  labels     = { site = "estate", stack = "backups" }
+  forward_to = [loki.write.estate.receiver]
+}
+
+prometheus.scrape "backup_plane" {
+  // Everything runs in this container's netns — scrape over loopback.
+  targets = [
+    { "__address__" = "127.0.0.1:9002", "job" = "tailscaled-bridge" },
+    { "__address__" = "127.0.0.1:8000", "job" = "rest-server-onsite" },
+  ]
+  forward_to = [prometheus.remote_write.estate.receiver]
+}
+
+// --- forwarders (over the estate LAN) ---
+
+prometheus.remote_write "estate" {
+  endpoint {
+    url = sys.env("ESTATE_PROM_URL")
+  }
+}
+
+loki.write "estate" {
+  endpoint {
+    url = sys.env("ESTATE_LOKI_URL")
+  }
+}

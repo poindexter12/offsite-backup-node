@@ -10,6 +10,17 @@ current with its upstreams.
 Built for the "host a backup box at a relative's house" use case: the person
 running it needs near-zero maintenance and can never read the data.
 
+## One image, two roles
+
+The image carries a `ROLE` switch (default `offsite`). `ROLE=bridge` runs the
+estate-side plane from the same artifact: kernel-mode tailscale (compose adds
+`NET_ADMIN` + `/dev/net/tun`), the same append-only rest-server published on
+the LAN by compose, the receiving alloy pipeline (relays the offsite node's
+pushes to the estate observability stack), and a busybox-crond restic
+copy-job (`COPY_ENABLED=true` + a mounted crontab). The bridge's compose
+lives in the estate's infra repo; everything below describes the offsite
+default.
+
 ## What runs (inside the one container)
 
 The image is assembled from official upstream images — the binaries are copied

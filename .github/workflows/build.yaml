@@ -1,7 +1,7 @@
 # Build & publish ghcr.io/poindexter12/offsite-backup-node.
 #
 # Replaces watchtower-on-the-box: every 6h (watchtower's old poll interval)
-# this compares the current digests of the four upstream images against the
+# this compares the current digests of the five upstream images against the
 # digests baked into the last published image's labels, and rebuilds only when
 # an upstream actually released. Pushes to main always build (Dockerfile /
 # entrypoint / config changes). The offsite box just `docker compose pull`s.
@@ -29,6 +29,7 @@ env:
   TAILSCALE_IMAGE: tailscale/tailscale:latest
   REST_SERVER_IMAGE: restic/rest-server:latest
   ALLOY_IMAGE: grafana/alloy:latest
+  RESTIC_IMAGE: restic/restic:latest
   BASE_IMAGE: debian:stable-slim
 
 jobs:
@@ -54,8 +55,9 @@ jobs:
           ts=$(digest "$TAILSCALE_IMAGE")
           rest=$(digest "$REST_SERVER_IMAGE")
           alloy=$(digest "$ALLOY_IMAGE")
+          restic=$(digest "$RESTIC_IMAGE")
           base=$(digest "$BASE_IMAGE")
-          upstream="tailscale=$ts rest-server=$rest alloy=$alloy base=$base"
+          upstream="tailscale=$ts rest-server=$rest alloy=$alloy restic=$restic base=$base"
           echo "upstream: $upstream"
 
           published=$(skopeo inspect "docker://$IMAGE:latest" 2>/dev/null \
@@ -74,6 +76,7 @@ jobs:
             echo "tailscale_ref=${TAILSCALE_IMAGE%%:*}@$ts"
             echo "rest_server_ref=${REST_SERVER_IMAGE%%:*}@$rest"
             echo "alloy_ref=${ALLOY_IMAGE%%:*}@$alloy"
+            echo "restic_ref=${RESTIC_IMAGE%%:*}@$restic"
             echo "base_ref=${BASE_IMAGE%%:*}@$base"
             echo "date_tag=$(date -u +%Y%m%d-%H%M)"
           } >> "$GITHUB_OUTPUT"
@@ -99,6 +102,7 @@ jobs:
             TAILSCALE_IMAGE=${{ steps.check.outputs.tailscale_ref }}
             REST_SERVER_IMAGE=${{ steps.check.outputs.rest_server_ref }}
             ALLOY_IMAGE=${{ steps.check.outputs.alloy_ref }}
+            RESTIC_IMAGE=${{ steps.check.outputs.restic_ref }}
             BASE_IMAGE=${{ steps.check.outputs.base_ref }}
             UPSTREAM_DIGESTS=${{ steps.check.outputs.upstream_digests }}
           tags: |
