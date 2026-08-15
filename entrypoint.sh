@@ -58,8 +58,18 @@ containerboot > >(prefix tailscale) 2>&1 &
 TS_PID=$!
 
 # --- restic rest-server (append-only, htpasswd, prometheus on :8000) --------
+# Auth arrives either as a mounted file (compose bundles) or as the
+# REST_HTPASSWD env var holding the "user:bcrypt-hash" line (env-only setups,
+# e.g. an Unraid container template — no operator files needed).
+HTPASSWD_FILE=/config/restic/.htpasswd
+if [ ! -f "$HTPASSWD_FILE" ] && [ -n "${REST_HTPASSWD:-}" ]; then
+  printf '%s\n' "$REST_HTPASSWD" > /run/restic-htpasswd
+  chmod 600 /run/restic-htpasswd
+  HTPASSWD_FILE=/run/restic-htpasswd
+  echo "[rest-server] using htpasswd from REST_HTPASSWD env"
+fi
 rest-server --path /data --append-only \
-  --htpasswd-file /config/restic/.htpasswd \
+  --htpasswd-file "$HTPASSWD_FILE" \
   --prometheus --prometheus-no-auth > >(prefix rest-server) 2>&1 &
 REST_PID=$!
 
