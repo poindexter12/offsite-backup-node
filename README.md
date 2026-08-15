@@ -43,6 +43,21 @@ container exits and docker restarts everything together (no more
 impossible by construction). Alloy is best-effort: telemetry failure never
 takes down the backup target.
 
+## Running it on Unraid (easiest: the template)
+
+This repo doubles as an Unraid **template repository**. On the box:
+
+1. Docker tab → scroll to **Template Repositories** → add
+   `https://github.com/poindexter12/offsite-backup-node` → Save.
+2. **Add Container** → in the *Template* dropdown pick `jacaranda-offsite`.
+3. Fill in the three values the operator provides: the Tailscale auth key,
+   the REST auth line (`user:$2y$...`), and point the backup-data path at a
+   share. Apply.
+
+Everything else (mounts, `NET_ADMIN` for the bandwidth caps, telemetry
+endpoints) arrives prefilled from the template — no compose, no files, no
+shell. The generic non-Unraid path (`run.sh` / compose) is below.
+
 ## Running it
 
 You need two small files from whoever operates the backups (they contain the
