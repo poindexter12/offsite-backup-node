@@ -45,11 +45,18 @@ takes down the backup target.
 
 ## Running it on Unraid (easiest: the template)
 
-This repo doubles as an Unraid **template repository**. On the box:
+Unraid 7 dropped the old "Template Repositories" UI, so the template installs
+with one command. On the box:
 
-1. Docker tab → scroll to **Template Repositories** → add
-   `https://github.com/poindexter12/offsite-backup-node` → Save.
-2. **Add Container** → in the *Template* dropdown pick `jacaranda-offsite`.
+1. Open the **web terminal** (the `>_` icon, top right) and paste:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/poindexter12/offsite-backup-node/main/unraid-template.xml \
+     -o /boot/config/plugins/dockerMan/templates-user/my-jacaranda-offsite.xml
+   ```
+
+2. Docker tab → **Add Container** → in the *Template* dropdown pick
+   `jacaranda-offsite`.
 3. Fill in the three values the operator provides: the Tailscale auth key,
    the REST auth line (`user:$2y$...`), and point the backup-data path at a
    share. Apply.
