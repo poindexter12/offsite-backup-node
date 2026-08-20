@@ -44,6 +44,20 @@ prometheus.scrape "backup_plane" {
   forward_to = [prometheus.remote_write.estate.receiver]
 }
 
+prometheus.scrape "offsite" {
+  // The offsite node runs the slim image (no alloy) — the bridge scrapes it
+  // over the tailnet instead. serve on the offsite end forwards :80 to
+  // rest-server and :9002 to tailscaled's metrics. OFFSITE_ADDR is resolved
+  // from tailscaled's netmap by the entrypoint before each alloy start
+  // (MagicDNS never reaches libc here); scrape failures double as the
+  // offsite-down detector (up{job=~".*-offsite"} == 0).
+  targets = [
+    { "__address__" = sys.env("OFFSITE_ADDR") + ":80", "job" = "rest-server-offsite", "site" = "offsite" },
+    { "__address__" = sys.env("OFFSITE_ADDR") + ":9002", "job" = "tailscaled-offsite", "site" = "offsite" },
+  ]
+  forward_to = [prometheus.remote_write.estate.receiver]
+}
+
 // --- forwarders (over the estate LAN) ---
 
 prometheus.remote_write "estate" {

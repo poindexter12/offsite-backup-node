@@ -89,11 +89,12 @@ jobs:
         if: steps.check.outputs.needs_build == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push offsite (slim, :latest)
         if: steps.check.outputs.needs_build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: offsite
           platforms: linux/amd64,linux/arm64
           push: true
           # Upstreams pinned to the exact digests we compared, so the label
@@ -108,3 +109,22 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.check.outputs.date_tag }}
+
+      - name: Build and push bridge (superset, :bridge)
+        if: steps.check.outputs.needs_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: bridge
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            TAILSCALE_IMAGE=${{ steps.check.outputs.tailscale_ref }}
+            REST_SERVER_IMAGE=${{ steps.check.outputs.rest_server_ref }}
+            ALLOY_IMAGE=${{ steps.check.outputs.alloy_ref }}
+            RESTIC_IMAGE=${{ steps.check.outputs.restic_ref }}
+            BASE_IMAGE=${{ steps.check.outputs.base_ref }}
+            UPSTREAM_DIGESTS=${{ steps.check.outputs.upstream_digests }}
+          tags: |
+            ${{ env.IMAGE }}:bridge
+            ${{ env.IMAGE }}:bridge-${{ steps.check.outputs.date_tag }}

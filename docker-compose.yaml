@@ -24,7 +24,9 @@ services:
   offsite-backup:
     image: ghcr.io/poindexter12/offsite-backup-node:latest
     # For development: `docker compose up -d --build` builds locally instead.
-    build: .
+    build:
+      context: .
+      target: offsite
     hostname: ${OFFSITE_HOSTNAME:-offsite-backup}
     # NET_ADMIN is only for the tc bandwidth cap (entrypoint shapes eth0);
     # tailscaled runs in userspace mode and needs nothing special.
@@ -43,6 +45,5 @@ services:
     volumes:
       - ${CONFIG_ROOT:-./config}/tailscaled:/var/lib/tailscale
       - ${CONFIG_ROOT:-./config}/restic:/config/restic:ro
-      - ${CONFIG_ROOT:-./config}/alloy:/var/lib/alloy
       - ${DATA_PATH:?path to the backup disk/directory}:/data
     restart: unless-stopped

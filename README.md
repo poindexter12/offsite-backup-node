@@ -10,38 +10,44 @@ current with its upstreams.
 Built for the "host a backup box at a relative's house" use case: the person
 running it needs near-zero maintenance and can never read the data.
 
-## One image, two roles
+## One source, two images
 
-The image carries a `ROLE` switch (default `offsite`). `ROLE=bridge` runs the
-estate-side plane from the same artifact: kernel-mode tailscale (compose adds
-`NET_ADMIN` + `/dev/net/tun`), the same append-only rest-server published on
-the LAN by compose, the receiving alloy pipeline (relays the offsite node's
-pushes to the estate observability stack), and a busybox-crond restic
-copy-job (`COPY_ENABLED=true` + a mounted crontab). The bridge's compose
-lives in the estate's infra repo; everything below describes the offsite
-default.
+One Dockerfile, two published targets sharing every layer that matters:
+
+- **`:latest`** (~225MB) — the offsite node, `ROLE=offsite` (default).
+  Deliberately slim: no alloy, no restic. Metrics are **scraped by the estate
+  bridge over the tailnet** (serve forwards :80 rest-server and :9002
+  tailscaled metrics); the node's own logs ship home via a tiny curl/jq loop
+  through tailscaled's outbound proxy — bounded and lossy-by-design, never
+  more than a few MB on local disk.
+- **`:bridge`** — a strict superset (`FROM offsite`): adds alloy (scrapes the
+  offsite node and itself, relays to the estate observability stack), restic
+  (nightly copy-job under busybox crond), and iptables for kernel-mode
+  tailscale. Runs on the estate VMs, where size is irrelevant; its compose
+  lives in the estate's infra repo.
+
+Everything below describes the offsite default.
 
 ## What runs (inside the one container)
 
 The image is assembled from official upstream images — the binaries are copied
-straight out of `tailscale/tailscale`, `restic/rest-server`, and
-`grafana/alloy` at build time onto a minimal `debian:stable-slim` base
-(tailscaled and rest-server are static; alloy is the one glibc-linked binary,
-which is what rules out alpine/distroless) — and a small supervisor
+straight out of `tailscale/tailscale` and `restic/rest-server` at build time
+onto a minimal `debian:stable-slim` base — and a small supervisor
 (`entrypoint.sh`) runs them as one unit:
 
 | Process | From | Job |
 |---|---|---|
-| tailscaled | `tailscale/tailscale` | joins the private network (userspace mode); HTTPS via `tailscale serve` |
+| tailscaled | `tailscale/tailscale` | joins the private network (userspace mode); `tailscale serve` exposes rest-server (:80) and metrics (:9002) to the tailnet |
 | rest-server | `restic/rest-server` | restic REST API, **append-only** (clients can write, never delete history), htpasswd auth |
-| alloy | `grafana/alloy` | ships logs/metrics back to the operator over the same private network |
+| log shipper | curl + jq | forwards the node's own logs to the operator; aggressive local rotation (2MB shipped / 10MB hard cap) |
 | tc shaping | iproute2 | applies your bandwidth caps at startup (the reason the container has `NET_ADMIN`) |
 
 Lifecycle: tailscaled and rest-server are critical — if either dies, the
 container exits and docker restarts everything together (no more
 "never restart the tailscale container alone" foot-gun; partial restarts are
-impossible by construction). Alloy is best-effort: telemetry failure never
-takes down the backup target.
+impossible by construction). Telemetry is best-effort: shipping failure never
+takes down the backup target, and unshipped logs are truncated rather than
+allowed to accumulate.
 
 ## Running it on Unraid (easiest: the template)
 
@@ -124,7 +130,7 @@ All options, with defaults (see `env.example`):
 | `OFFSITE_HOSTNAME` | `offsite-backup` | node name on the private network (also the container hostname) |
 | `TS_AUTHKEY` | *(empty)* | one-shot Tailscale auth key — only matters on first boot; the node never re-enrolls |
 | `TS_LOGIN_SERVER` | *(empty)* | optional self-hosted control server URL (headscale); empty = Tailscale SaaS |
-| `CONFIG_ROOT` | `./config` | directory holding all persistent component state (tailscale identity, htpasswd, alloy WAL) |
+| `CONFIG_ROOT` | `./config` | directory holding all persistent component state (tailscale identity, htpasswd) |
 | `DATA_PATH` | **required** | absolute path to the disk/directory that stores the backups |
 | `PROM_PUSH_URL` | *(empty)* | metrics receiver on the operator's bridge node |
 | `LOKI_PUSH_URL` | *(empty)* | log receiver on the operator's bridge node |

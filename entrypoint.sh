@@ -1,19 +1,26 @@
 #!/bin/bash
-# Supervisor for the single-image backup node. One image, two roles (ROLE):
+# Supervisor for the backup node. One source, two roles (ROLE):
 #
-#   offsite (default) — the shipped bundle at the relative's house. Userspace
-#     tailscale (zero device deps), inbound via `tailscale serve`, alloy
-#     PUSHES telemetry home through tailscaled's outbound proxy.
-#   bridge — the estate-side plane. Kernel-mode tailscale (needs NET_ADMIN +
-#     /dev/net/tun from compose — outbound tailnet dials for restic copy),
-#     rest-server published on the LAN by compose, alloy RECEIVES the offsite
-#     pushes and relays to the estate observability stack, and busybox crond
-#     runs the nightly restic copy-job (COPY_ENABLED=true + mounted crontab).
+#   offsite (default) — the shipped bundle at the relative's house, from the
+#     SLIM image (no alloy): userspace tailscale (zero device deps), inbound
+#     via `tailscale serve` (:80 rest-server, :9002 tailscaled metrics — the
+#     estate bridge SCRAPES those over the tailnet; nothing pushes metrics),
+#     and a curl/jq log shipper that forwards the node's own logs to the
+#     bridge through tailscaled's outbound proxy.
+#   bridge — the estate-side plane, from the :bridge image (adds alloy +
+#     restic). Kernel-mode tailscale (NET_ADMIN + /dev/net/tun from compose),
+#     rest-server published on the LAN by compose, alloy scrapes the offsite
+#     node over the tailnet and relays everything to the estate observability
+#     stack, busybox crond runs the nightly restic copy-job (COPY_ENABLED).
 #
 # Process policy: containerboot and rest-server are critical — death exits the
-# container and docker restarts everything together. alloy and crond are
-# best-effort restart loops — telemetry/copy loss must never take down the
-# backup target itself.
+# container and docker restarts everything together. Telemetry (alloy or the
+# log shipper) is best-effort and must never take down the backup target.
+#
+# Local log hygiene: every service line tees to /var/log/node.log; a 60s
+# rotation loop truncates it past 10MB unconditionally (the shipper truncates
+# far earlier once lines are delivered). Telemetry may be lossy by design —
+# it must NEVER accumulate on the host.
 set -u
 
 ROLE="${ROLE:-offsite}"
@@ -23,22 +30,23 @@ case "$ROLE" in
   bridge)
     export TS_USERSPACE=false
     unset TS_SERVE_CONFIG TS_SOCKS5_SERVER TS_OUTBOUND_HTTP_PROXY_LISTEN
+    command -v alloy >/dev/null || { echo "[supervisor] ROLE=bridge needs the :bridge image (alloy missing)"; exit 1; }
     ;;
   *) echo "[supervisor] unknown ROLE '$ROLE' (offsite|bridge)"; exit 1 ;;
 esac
 echo "[supervisor] role: $ROLE"
 
-# Every service line goes to container stdout AND /var/log/node.log — the
-# offsite alloy ships the file (its own logs only; no docker socket needed).
-: > /var/log/node.log
-prefix() { sed -u "s/^/[$1] /" | tee -a /var/log/node.log; }
+NODE_LOG=/var/log/node.log
+: > "$NODE_LOG"
+prefix() { sed -u "s/^/[$1] /" | tee -a "$NODE_LOG"; }
 
-# Size guard: hourly truncate if the log tops 50MB (alloy handles truncation).
-( while :; do sleep 3600; [ "$(stat -c%s /var/log/node.log 2>/dev/null || echo 0)" -gt 52428800 ] && : > /var/log/node.log; done ) &
+# --- local log bound (both roles): never past 10MB, checked every 60s -------
+( while :; do
+    sleep 60
+    [ "$(stat -c%s "$NODE_LOG" 2>/dev/null || echo 0)" -gt 10485760 ] && : > "$NODE_LOG"
+  done ) &
 
 # --- bandwidth shaping (MAX_UP_MBIT / MAX_DOWN_MBIT, 0 = unlimited) ---------
-# tc caps on eth0; the container needs NET_ADMIN. Shaping failure is a
-# warning, not fatal — an unshaped backup box still works.
 shape() {
   local up="${MAX_UP_MBIT:-0}" down="${MAX_DOWN_MBIT:-0}"
   if [ "$up" -gt 0 ] 2>/dev/null; then
@@ -66,7 +74,7 @@ TS_PID=$!
 # --- restic rest-server (append-only, htpasswd, prometheus on :8000) --------
 # Auth arrives either as a mounted file (compose bundles) or as the
 # REST_HTPASSWD env var holding the "user:bcrypt-hash" line (env-only setups,
-# e.g. an Unraid container template — no operator files needed).
+# e.g. the Unraid container template — no operator files needed).
 HTPASSWD_FILE=/config/restic/.htpasswd
 if [ ! -f "$HTPASSWD_FILE" ] && [ -n "${REST_HTPASSWD:-}" ]; then
   printf '%s\n' "$REST_HTPASSWD" > /run/restic-htpasswd
@@ -79,17 +87,57 @@ rest-server --path /data --append-only \
   --prometheus --prometheus-no-auth > >(prefix rest-server) 2>&1 &
 REST_PID=$!
 
-# --- alloy telemetry (role-specific pipeline; best-effort restart loop) -----
-(
-  while :; do
-    alloy run "/etc/alloy/${ROLE}.alloy" --storage.path=/var/lib/alloy
-    echo "alloy exited ($?), restarting in 15s"
-    sleep 15
-  done
-) > >(prefix alloy) 2>&1 &
-ALLOY_PID=$!
+# --- offsite: own-log shipper (loki JSON push through tailscaled's proxy) ---
+# Best-effort and bounded: lines that fail to ship are eventually truncated
+# by the rotation loop — telemetry loss is acceptable, local buildup is not.
+# Diagnostics go straight to stdout (NOT via prefix — no feedback loop).
+SHIP_PID=""
+if [ "$ROLE" = "offsite" ] && [ -n "${LOKI_PUSH_URL:-}" ]; then
+  (
+    off=0
+    while :; do
+      sleep 15
+      size=$(stat -c%s "$NODE_LOG" 2>/dev/null || echo 0)
+      [ "$size" -lt "$off" ] && off=0   # rotated behind us
+      if [ "$size" -gt "$off" ]; then
+        chunk=$(tail -c +"$((off+1))" "$NODE_LOG" | head -c 1048576)
+        n=$(printf '%s' "$chunk" | wc -c)
+        payload=$(printf '%s' "$chunk" | jq -Rn --arg ts "$(date +%s%N)" \
+          '{streams:[{stream:{site:"offsite",stack:"backups",job:"node"},values:[inputs | select(length>0) | [$ts, .]]}]}') || { off=$((off+n)); continue; }
+        if curl -fsS -m 15 -x http://127.0.0.1:1055 \
+             -H 'Content-Type: application/json' -d "$payload" \
+             "$LOKI_PUSH_URL" >/dev/null 2>&1; then
+          off=$((off+n))
+        fi
+      fi
+      # aggressive local hygiene: once everything is shipped, reclaim early
+      [ "$size" -gt 2097152 ] && [ "$off" -ge "$size" ] && { : > "$NODE_LOG"; off=0; }
+    done
+  ) &
+  SHIP_PID=$!
+  echo "[log-shipper] shipping $NODE_LOG -> $LOKI_PUSH_URL (batched, bounded)"
+elif [ "$ROLE" = "offsite" ]; then
+  echo "[log-shipper] disabled (LOKI_PUSH_URL empty) — local 10MB bound still enforced"
+fi
 
-# --- copy-job crond (bridge only; best-effort restart loop) -----------------
+# --- bridge: alloy relay (scrapes the offsite node; best-effort loop) -------
+ALLOY_PID=""
+if [ "$ROLE" = "bridge" ]; then
+  (
+    while :; do
+      # Resolve the offsite peer through tailscaled's netmap each (re)start —
+      # MagicDNS names never reach libc here (--accept-dns=false).
+      OFFSITE_ADDR=$(tailscale ip -4 "${OFFSITE_HOST:-jacaranda-offsite}" 2>/dev/null) || OFFSITE_ADDR=127.0.0.1
+      export OFFSITE_ADDR
+      alloy run /etc/alloy/bridge.alloy --storage.path=/var/lib/alloy
+      echo "alloy exited ($?), restarting in 15s"
+      sleep 15
+    done
+  ) > >(prefix alloy) 2>&1 &
+  ALLOY_PID=$!
+fi
+
+# --- bridge: copy-job crond (best-effort restart loop) ----------------------
 CRON_PID=""
 if [ "$ROLE" = "bridge" ] && [ "${COPY_ENABLED:-false}" = "true" ]; then
   if [ -f /etc/crontabs/root ]; then
@@ -108,7 +156,7 @@ elif [ "$ROLE" = "bridge" ]; then
   echo "[copy-job] dormant (COPY_ENABLED != true)"
 fi
 
-term() { kill "$TS_PID" "$REST_PID" "$ALLOY_PID" ${CRON_PID:+"$CRON_PID"} 2>/dev/null; }
+term() { kill "$TS_PID" "$REST_PID" ${ALLOY_PID:+"$ALLOY_PID"} ${SHIP_PID:+"$SHIP_PID"} ${CRON_PID:+"$CRON_PID"} 2>/dev/null; }
 trap term TERM INT
 
 # Exit when either critical process dies; docker restarts the whole container,

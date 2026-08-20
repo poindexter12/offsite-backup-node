@@ -22,7 +22,7 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 : "${DATA_PATH:?DATA_PATH must be set in .env (absolute path to the backup disk/directory)}"
 [ -d "$DATA_PATH" ] || fail "DATA_PATH=$DATA_PATH does not exist on this machine — edit .env to point at the backup disk"
 
-mkdir -p config/tailscaled config/alloy
+mkdir -p config/tailscaled
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker pull -q "$IMAGE"
@@ -39,7 +39,6 @@ docker run -d --name "$NAME" \
   -e MAX_DOWN_MBIT="${MAX_DOWN_MBIT:-0}" \
   -v "$PWD/config/tailscaled:/var/lib/tailscale" \
   -v "$PWD/config/restic:/config/restic:ro" \
-  -v "$PWD/config/alloy:/var/lib/alloy" \
   -v "$DATA_PATH:/data" \
   "$IMAGE" >/dev/null
 
