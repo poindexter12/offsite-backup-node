@@ -152,5 +152,8 @@ exceed it no matter what. This shaping is why the container carries the
 - **No secrets in this repo**: everything identifying or sensitive arrives via
   the two operator-provided files.
 - **No secrets in the image**: the image bakes in only tracked, non-secret
-  config (`serve.json`, the alloy template); identity and credentials arrive
+  config (`serve.json`, the alloy templates); identity and credentials arrive
   via mounts and environment at run time.
+- **No docker socket**: the node ships only its own logs (teed to a file
+  inside the container) — it cannot see, list, or read anything else running
+  on the host.

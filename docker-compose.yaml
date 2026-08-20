@@ -45,6 +45,4 @@ services:
       - ${CONFIG_ROOT:-./config}/restic:/config/restic:ro
       - ${CONFIG_ROOT:-./config}/alloy:/var/lib/alloy
       - ${DATA_PATH:?path to the backup disk/directory}:/data
-      # Alloy ships this container's own logs home via the docker API.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped

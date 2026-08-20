@@ -1,19 +1,20 @@
 // Offsite telemetry → estate bridge node (SaaS tailnet) → observability.
-// Push URLs come from .env (they point at the estate-side bridge node's tailnet address).
+// Push URLs come from the environment (they point at the estate-side bridge
+// node's tailnet address).
+//
+// No docker socket, by design: the node ships ONLY its own logs, which the
+// supervisor tees to /var/log/node.log. A guest container at someone else's
+// house has no business seeing their other containers.
 
-discovery.docker "local" {
-  host = "unix:///var/run/docker.sock"
-}
-
-loki.source.docker "containers" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.docker.local.targets
-  labels     = { site = "offsite", stack = "backups" }
+loki.source.file "self" {
+  targets = [
+    { "__path__" = "/var/log/node.log", "site" = "offsite", "stack" = "backups" },
+  ]
   forward_to = [loki.write.estate.receiver]
 }
 
 prometheus.scrape "backup_stack" {
-  // Everything runs in this container's netns now — scrape over loopback.
+  // Everything runs in this container's netns — scrape over loopback.
   targets = [
     { "__address__" = "127.0.0.1:8000", "job" = "rest-server" },
     { "__address__" = "127.0.0.1:9002", "job" = "tailscaled" },

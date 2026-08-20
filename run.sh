@@ -41,7 +41,6 @@ docker run -d --name "$NAME" \
   -v "$PWD/config/restic:/config/restic:ro" \
   -v "$PWD/config/alloy:/var/lib/alloy" \
   -v "$DATA_PATH:/data" \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
   "$IMAGE" >/dev/null
 
 echo "started. status:  docker logs -f $NAME"

@@ -28,7 +28,13 @@ case "$ROLE" in
 esac
 echo "[supervisor] role: $ROLE"
 
-prefix() { sed -u "s/^/[$1] /"; }
+# Every service line goes to container stdout AND /var/log/node.log — the
+# offsite alloy ships the file (its own logs only; no docker socket needed).
+: > /var/log/node.log
+prefix() { sed -u "s/^/[$1] /" | tee -a /var/log/node.log; }
+
+# Size guard: hourly truncate if the log tops 50MB (alloy handles truncation).
+( while :; do sleep 3600; [ "$(stat -c%s /var/log/node.log 2>/dev/null || echo 0)" -gt 52428800 ] && : > /var/log/node.log; done ) &
 
 # --- bandwidth shaping (MAX_UP_MBIT / MAX_DOWN_MBIT, 0 = unlimited) ---------
 # tc caps on eth0; the container needs NET_ADMIN. Shaping failure is a
