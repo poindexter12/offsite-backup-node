@@ -32,6 +32,13 @@ prometheus.remote_write "estate" {
     proxy_url = "http://127.0.0.1:1055"
   }
   external_labels = { site = "offsite" }
+  // Bound the buffer: if the bridge is unreachable, keep at most ~8h of
+  // metrics. Never let a telemetry buffer eat someone's disk (or their
+  // Unraid docker.img, if the state mount is missing).
+  wal {
+    truncate_frequency = "1h"
+    max_keep_time      = "8h"
+  }
 }
 
 loki.write "estate" {
