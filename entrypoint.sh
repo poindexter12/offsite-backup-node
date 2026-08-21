@@ -124,13 +124,34 @@ fi
 ALLOY_PID=""
 if [ "$ROLE" = "bridge" ]; then
   (
+    resolve_offsite() { tailscale ip -4 "${OFFSITE_HOST:-jacaranda-offsite}" 2>/dev/null; }
     while :; do
-      # Resolve the offsite peer through tailscaled's netmap each (re)start —
-      # MagicDNS names never reach libc here (--accept-dns=false).
-      OFFSITE_ADDR=$(tailscale ip -4 "${OFFSITE_HOST:-jacaranda-offsite}" 2>/dev/null) || OFFSITE_ADDR=127.0.0.1
-      export OFFSITE_ADDR
-      alloy run /etc/alloy/bridge.alloy --storage.path=/var/lib/alloy
-      echo "alloy exited ($?), restarting in 15s"
+      # Resolve the offsite peer through tailscaled's netmap — MagicDNS never
+      # reaches libc here (--accept-dns=false). tailscaled may still be
+      # booting (or the offsite node not yet enrolled): retry for ~60s, then
+      # fall back and let the change-watcher below catch up later.
+      ADDR=""
+      for _ in $(seq 1 12); do
+        ADDR=$(resolve_offsite) && [ -n "$ADDR" ] && break
+        sleep 5
+      done
+      [ -n "$ADDR" ] || ADDR=127.0.0.1
+      echo "offsite scrape target: ${OFFSITE_HOST:-jacaranda-offsite} -> $ADDR"
+      OFFSITE_ADDR="$ADDR" alloy run /etc/alloy/bridge.alloy --storage.path=/var/lib/alloy &
+      APID=$!
+      # Restart alloy if the peer's address changes (first enrollment, or a
+      # re-enrolled node getting a new IP).
+      while kill -0 "$APID" 2>/dev/null; do
+        sleep 300
+        NEW=$(resolve_offsite) || NEW=""
+        if [ -n "$NEW" ] && [ "$NEW" != "$ADDR" ]; then
+          echo "offsite address changed ($ADDR -> $NEW), restarting alloy"
+          kill "$APID"
+          break
+        fi
+      done
+      wait "$APID" 2>/dev/null
+      echo "alloy exited, restarting in 15s"
       sleep 15
     done
   ) > >(prefix alloy) 2>&1 &
