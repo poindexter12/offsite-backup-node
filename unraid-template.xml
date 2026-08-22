@@ -12,7 +12,10 @@
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
   <!-- NET_ADMIN is only for the host-side bandwidth caps (tc). -->
-  <ExtraParams>--cap-add=NET_ADMIN --hostname=jacaranda-offsite --restart=unless-stopped</ExtraParams>
+  <!-- log-opts hard-cap the container's json log inside docker.img (20MB max)
+       even if the host's global log rotation is disabled — a crash-looping
+       container must never be able to fill docker.img with its own logs. -->
+  <ExtraParams>--cap-add=NET_ADMIN --hostname=jacaranda-offsite --restart=unless-stopped --log-opt max-size=10m --log-opt max-file=2</ExtraParams>
   <Support>https://github.com/poindexter12/offsite-backup-node</Support>
   <Project>https://github.com/poindexter12/offsite-backup-node</Project>
   <Overview>Append-only restic REST server reachable only over a private Tailscale network. Nothing listens on the LAN; all stored data is client-side encrypted; the image keeps itself current from upstream releases via its publisher's CI (enable Unraid's auto-update or re-pull occasionally).</Overview>
@@ -24,6 +27,6 @@
   <Config Name="Logs push URL" Target="LOKI_PUSH_URL" Default="http://jacaranda-bridge:3100/loki/api/v1/push" Mode="" Description="Operator's log receiver (over the private network)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Download cap (Mbit/s)" Target="MAX_DOWN_MBIT" Default="0" Mode="" Description="Cap on incoming backup traffic. 0 = unlimited. Protects YOUR connection." Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="Upload cap (Mbit/s)" Target="MAX_UP_MBIT" Default="0" Mode="" Description="Cap on outgoing restore/telemetry traffic. 0 = unlimited." Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="Backup data" Target="/data" Default="/mnt/user/backups-jacaranda" Mode="rw" Description="Where the (encrypted) backups live. Point at a share on the array." Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Backup data" Target="/data" Default="" Mode="rw" Description="Where the (encrypted) backups live. Point at an EXISTING share on the array — deliberately no default, so it can't silently invent a new share." Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="Tailscale state" Target="/var/lib/tailscale" Default="/mnt/user/appdata/jacaranda-offsite/tailscaled" Mode="rw" Description="Node identity — must persist or the node re-enrolls every recreate. Tip: if your appdata lives on a cache pool, a /mnt/cache/... path avoids Unraid's FUSE layer." Type="Path" Display="advanced" Required="true" Mask="false"/>
 </Container>

@@ -36,6 +36,16 @@ case "$ROLE" in
 esac
 echo "[supervisor] role: $ROLE"
 
+# Refuse to run with an unmounted /data: backups written into the container's
+# own filesystem would silently fill the host's docker storage (on Unraid,
+# the fixed-size docker.img — a whole-host outage). Fail fast and loud.
+if ! mountpoint -q /data; then
+  echo "[supervisor] FATAL: /data is not a mounted volume — refusing to write backups into the container filesystem. Map a host path to /data."
+  exit 1
+fi
+mountpoint -q /var/lib/tailscale || \
+  echo "[supervisor] WARNING: /var/lib/tailscale is not a mounted volume — the node identity will NOT survive a container recreate (re-enrollment will need a fresh auth key)."
+
 NODE_LOG=/var/log/node.log
 : > "$NODE_LOG"
 prefix() { sed -u "s/^/[$1] /" | tee -a "$NODE_LOG"; }
