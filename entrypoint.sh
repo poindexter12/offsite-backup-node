@@ -36,6 +36,19 @@ case "$ROLE" in
 esac
 echo "[supervisor] role: $ROLE"
 
+# Park (don't crash-loop) when the container filesystem is nearly full. On
+# Unraid `df /` here reports the free space of docker.img itself — the exact
+# resource whose exhaustion wedges btrfs, dockerd, and then the whole host.
+# Exiting would make the restart policy hammer a distressed host; parking
+# writes nothing, restarts nothing, and self-heals when space appears.
+MIN_FREE_MB="${MIN_FREE_MB:-512}"
+free_mb() { df -Pm / 2>/dev/null | awk 'NR==2{print $4}'; }
+if [ "$(free_mb)" -lt "$MIN_FREE_MB" ] 2>/dev/null; then
+  echo "[supervisor] FATAL: only $(free_mb)MB free on the container filesystem (< ${MIN_FREE_MB}MB). On Unraid this means docker.img is nearly full — grow it (Settings > Docker) or prune unused images. PARKED: no services, no writes, rechecking every 5 minutes."
+  while [ "$(free_mb)" -lt "$MIN_FREE_MB" ] 2>/dev/null; do sleep 300; done
+  echo "[supervisor] space recovered ($(free_mb)MB free) — starting normally"
+fi
+
 # Refuse to run with an unmounted /data: backups written into the container's
 # own filesystem would silently fill the host's docker storage (on Unraid,
 # the fixed-size docker.img — a whole-host outage). Fail fast and loud.
